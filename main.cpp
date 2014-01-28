@@ -18,7 +18,7 @@ const int WINDOW_HEIGHT = 600;
 const int GRID_SIZE = 9;
 const int MAX_X = 80;
 const int MAX_Y = 60;
-const int TIMEOUT = 500;
+const int TIMEOUT = 100;
 
 const char server_ip[] = "124.82.1.157";
 const int port = 8000;
