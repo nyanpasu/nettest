@@ -27,7 +27,7 @@ const int port = 8000;
 SDL_Window *window = NULL;
 SDL_Renderer *renderer = NULL;
 
-struct position
+struct client
 {
         int x = 0;
         int y = 0;
