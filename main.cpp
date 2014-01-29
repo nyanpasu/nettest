@@ -6,6 +6,7 @@
  * =====================================================================================
  */
 #include <stdlib.h>
+#include <time.h>
 #include <string>
 #include <vector>
 #include <SDL2/SDL.h>
@@ -13,26 +14,41 @@
 
 using namespace std;
 
-const int WINDOW_WIDTH = 800;
+// Constant and global declaration.
+const int WINDOW_WIDTH  = 800;
 const int WINDOW_HEIGHT = 600;
-const int GRID_SIZE = 9;
-const int MAX_X = 80;
-const int MAX_Y = 60;
-const int TIMEOUT = 100;
+char WINDOW_TITLE[] = "Just liek maek gaem";
 
-const char server_ip[] = "124.82.1.157";
+const int GRID_SIZE     = 9;
+const int MAX_X         = 80;
+const int MAX_Y         = 60;
+
+const int TIMEOUT       = 100;
+
+char server_ip[] = "124.82.1.157";
 const int port = 8000;
 
 // Hurr globals are bad hurr durr
-SDL_Window *window = NULL;
+SDL_Window *window     = NULL;
 SDL_Renderer *renderer = NULL;
 
-struct client
+// Struct declarations.
+struct colourstruct
 {
-        int x = 0;
-        int y = 0;
+        int red;
+        int green;
+        int blue;
 };
 
+struct player
+{
+        int id;
+        colourstruct colour;
+        static int x;
+        static int y;
+};
+
+// Function declarations.
 void drawRedGrid()
 {
         // Set up rect that will be drawn repeatedly.
@@ -80,113 +96,251 @@ void drawBlueSquare( int x, int y )
         SDL_RenderFillRect( renderer, &rect );
 }
 
+void draw_square(int x, int y, colourstruct colour)
+{
+        SDL_Rect rect;
+        rect.w = GRID_SIZE;
+        rect.h = GRID_SIZE;
+        rect.x = x * 10;
+        rect.y = y * 10;
+
+        SDL_SetRenderDrawColor( renderer, colour.red, colour.green, colour.blue, 255 );
+
+        SDL_RenderFillRect( renderer, &rect );
+}
+
 void resetGrid()
 {
-        // Set grid to black first
+        // Clear screen first.
         SDL_SetRenderDrawColor( renderer, 0, 0, 0, 255 );
         SDL_RenderClear( renderer );
 
         drawRedGrid();
-
 }
 
-int main(int argc, const char *argv[])
+void inititalize_game()
 {
-        // Initialize SDL and the window/renderer.
         if ( SDL_Init( SDL_INIT_VIDEO ) < 0 )
         {
-                printf("%s\n", SDL_GetError() );
+                printf("I-I couldn't even get SDL to start: %s\n", SDL_GetError() );
         }
         
-
-        window = SDL_CreateWindow( "Just liek maek gaem",
+        window = SDL_CreateWindow( WINDOW_TITLE,
                           SDL_WINDOWPOS_CENTERED,
                           SDL_WINDOWPOS_CENTERED,
                           WINDOW_WIDTH, WINDOW_HEIGHT,
                           0 );
 
         renderer = SDL_CreateRenderer( window, -1, 0 );
+}
+
+void update_server(TCPsocket server, player me)
+{
+                int response = SDLNet_TCP_Send(server, &me, sizeof(player));
+                if ( response<sizeof(player) )
+                {
+                        printf("Auu: Failed to send position.\n");
+                        printf("Disconnecting to save face.\n");
+                        SDLNet_TCP_Close( server );
+                        printf("Disconnected. Commiting senpuku.\n");
+
+                        SDL_Quit();
+                        SDLNet_Quit();
+                        exit(0);
+                }
+}
+
+void get_data(TCPsocket server, int *value)
+{
+        int response = SDLNet_TCP_Recv( server,&value,sizeof(int));
+        if ( response <= 0 )
+        {
+                printf("Got an error while trying to get some data. Server must've crashed tragically.\n");
+                printf("... So I'll crash too. Bye!\n");
+                exit(1);
+        }
+}
+
+void get_data(TCPsocket server, colourstruct *value)
+{
+        int response = SDLNet_TCP_Recv( server, &value, sizeof(colourstruct));
+        if ( response <= 0 )
+        {
+                printf("Got an error while trying to get some data. Server must've crashed tragically.\n");
+                printf("... So I'll crash too. Bye!\n");
+                exit(1);
+        }
+}
+
+void get_data(TCPsocket server, player *value)
+{
+        int response = SDLNet_TCP_Recv( server, &value, sizeof(player));
+        if ( response <= 0 )
+        {
+                printf("Got an error while trying to get some data. Server must've crashed tragically.\n");
+                printf("... So I'll crash too. Bye!\n");
+                exit(1);
+        }
+}
+
+int get_client_position(vector<player> players, int id)
+{
+        for (int i = 0; i < players.size(); i++)
+        {
+                if (players[i].id == id)
+                {
+                        return i;
+                }
+        }
+}
+
+void update_positions(TCPsocket server, vector<player> players)
+{
+        // Get the number of updates.
+        int n;
+        get_data(server, &n);
+
+        for (int i = 0; i < n; i++)
+        {
+                // Get the client id to update.
+                int id;
+                get_data(server, &id);
+                // Then the coords.
+                int x; int y;
+                get_data(server, &x); get_data(server, &x);
+                players[get_client_position(players, id)].x = x;
+                players[get_client_position(players, id)].y = y;
+        }
+}
+
+void add_client(TCPsocket server, vector<player> players)
+{
+        player new_client;
+
+        // TODO experiment and see if you can directly throw in newclient.id instead of id.
+        // Likewise for the other elements.
+        int id;
+        get_data(server, &id);
+        colourstruct colour;
+        get_data(server, &colour);
+        int x; int y;
+        get_data(server, &x); get_data(server, &y);
+
+        new_client.id     = id;
+        new_client.x      = x;
+        new_client.y      = y;
+        new_client.colour = colour;
+
+        printf("Someone new joined: ID: %d, at (%d, %d)\n", new_client.id, new_client.x, new_client.y);
+}
+
+void remove_client(TCPsocket server, vector<player> players)
+{
+        // Get the ID of the person who left and remove him for the players array.
+        int id;
+        get_data(server, &id);
+
+        int pos = get_client_position(players, id);
+        players.erase(players.begin() + pos);
+
+        printf("Client %d left.\n", id);
+}
+
+void handle_server(TCPsocket server, vector<player> players)
+{
+        // 1. Determine what the server is trying to send us.
+        // It can be
+        //  a. Client join             ( message = 1 )
+        //  b. Client leave            ( message = 2 )
+        //  c. Client position update. ( message = 1 )
+        //
+        // In each case, this client has to handle each situation gracefully.
+        int message;
+        get_data(server, &message);
+
+        switch (message) {
+                case 1:
+                        add_client(server, players);
+                        break;
+                case 2:
+                        remove_client(server, players);
+                        break;
+                case 3:
+                        update_positions(server, players);
+                        break;
+                default:
+                        printf("Woah, I just got a pretty strange response.\n");
+                        break;
+        }
+}
+
+void draw_grid(player me, vector<player> players)
+{
+        resetGrid();
+
+        // Draw me
+        drawGreenSquare(me.x, me.y);
+
+        // Draw other clients.
+        for ( int i = 0; i < players.size(); i++ )
+        {
+                player remote_player = players[i];
+                draw_square(remote_player.x, remote_player.y, remote_player.colour);
+        }
+}
+
+int main(int argc, const char *argv[])
+{
+        // For random numbers
+        srand(time(NULL));
+
+        inititalize_game();
 
         // Connect to the serber
-        IPaddress ip;
-        TCPsocket server;
+        IPaddress ip; TCPsocket server;
         SDLNet_ResolveHost(&ip, server_ip, port);
-        server = SDLNet_TCP_Open(&ip);
         SDLNet_SocketSet server_monitor = SDLNet_AllocSocketSet(1);
+
+        server = SDLNet_TCP_Open(&ip);
         if ( !server )
         {
                 printf("Could't connect to server\nWill carry on nonetheless. Don't worry.\n");
         } else {
-                printf("Connected! Surprisingly.\n");
+                printf("Connected to a remote server! Surprisingly.\n");
+                // Add it to the socket set so that it can be monitored for activity.
                 SDLNet_TCP_AddSocket( server_monitor, server );
         }
 
-        // User process stuff
-        // Events and the likes.
-        bool loop = true;
-        bool timeout = false;
-        Uint32 lastTick = 0;
+        // Timer init
+        bool loop          = true;
+        bool timeout       = false;
+        Uint32 lastTick    = 0;
         Uint32 currentTick = SDL_GetTicks();
 
-        client player;
-        vector <client> players;
-        // //
-        // End of all the init stuff
-        // //
+        // Initialize vector of players
+        player me;
+        me.x = 0;
+        me.y = 0;
+        vector <player> players;
 
-        // Program loop
-        while ( loop ) 
+        // //
+        // Program loop starts here.
+        // //
+        while (loop) 
         {
-                // Do all the drawing and handle the server
-                resetGrid();
-                drawGreenSquare( player.x, player.y );
-                // Draw other clients.
-                for ( int i = 0; i < players.size(); i++ )
+                // Handle the server... see what it's trying to tell the local client.
+                if (server)
                 {
-                        client remote_player = players[i];
-                        drawBlueSquare( remote_player.x, remote_player.y );
+                        // Only bother trying if the server actually sent something.
+                        if (SDLNet_CheckSockets(server_monitor, 0)) handle_server(server, players);
                 }
-                // Update positions of other clients.
-                if ( server )
-                {
-                        int response = 1; // Used for various function calls.
-                        while ( response == 1 ) 
-                        {
-                                response = SDLNet_CheckSockets( server_monitor, 0 );
 
-                                if ( response == 1 )
-                                {
-                                        // socket activity happened.
-                                        // 1. Get number of clients.
-                                        int number_of_clients;
-                                        response = SDLNet_TCP_Recv( server,&number_of_clients,sizeof(int));
-                                        if ( response <= 0 )
-                                        {
-                                                printf("Eeeeh? W-what happened? I got an error from SDLNet_TCP_Recv.\n");
-                                        }
-                                        // 2. Draw position of each client.
-                                        for ( int i = 0; i < number_of_clients; i++ )
-                                        {
-                                                client remote_player;
-                                                response = SDLNet_TCP_Recv( server,&remote_player,sizeof(client));
-                                                if ( response <= 0 )
-                                                {
-                                                        printf("Eeeeh? W-what happened? I got an error from SDLNet_TCP_Recv.\n");
-                                                }
-                                                if ( i + 1 > players.size() )
-                                                {
-                                                        players.push_back(remote_player);
-                                                }
-                                                players[i] = remote_player;
-                                        }
-                                }
-                        }
-                }
-                // FINALLY render everything seen.
+                draw_grid(me, players);
+
+                // Render everything that's been drawn.
                 SDL_RenderPresent( renderer );
 
-                // Timeout handler. Will only process one key event
-                // every 300 milliseconds.
+                // Timeout handler.
                 if ( timeout == true )
                 {
                         currentTick = SDL_GetTicks();
@@ -196,68 +350,28 @@ int main(int argc, const char *argv[])
                         }
                 }
 
+                // Rest of the loop that's executed once every 300 milliseconds.
                 if ( timeout == false )
                 {
                         timeout = true;
                         lastTick = SDL_GetTicks();
 
-                        // Handle keyboard
+                        // Handle keyboard and movement of self.
                         SDL_PumpEvents();
                         const Uint8 *keyboard_state = SDL_GetKeyboardState(NULL);
 
-                        if ( keyboard_state[SDL_SCANCODE_SPACE] )
-                        {
-                                loop = false;
-                        }
-                        if ( keyboard_state[SDL_SCANCODE_RIGHT] )
-                        {
-                                if ( player.x + 1< MAX_X )
-                                {
-                                        player.x++;
-                                }
-                        }
-                        if ( keyboard_state[SDL_SCANCODE_LEFT] )
-                        {
-                                if ( player.x > 0 )
-                                {
-                                        player.x--;
-                                }
-                        }
-                        if ( keyboard_state[SDL_SCANCODE_UP] )
-                        {
-                                if ( player.y > 0 )
-                                {
-                                        player.y--;
-                                }
-                        }
-                        if ( keyboard_state[SDL_SCANCODE_DOWN] )
-                        {
-                                if ( player.y + 1< MAX_Y )
-                                {
-                                        player.y++;
-                                }
-                        }
+                        // Process for each key...
+                        // A bit ugly, but formatted for one line per key.
+                        if ( keyboard_state[SDL_SCANCODE_SPACE] ) loop = false;
+                        if ( keyboard_state[SDL_SCANCODE_RIGHT] ) if ( me.x + 1< MAX_X ) me.x++;
+                        if ( keyboard_state[SDL_SCANCODE_LEFT]  ) if ( me.x > 0        ) me.x--;
+                        if ( keyboard_state[SDL_SCANCODE_UP]    ) if ( me.y > 0        ) me.y--;
+                        if ( keyboard_state[SDL_SCANCODE_DOWN]  ) if ( me.y + 1< MAX_Y ) me.y++;
 
-                        // Send position to server.
-                        if ( server )
-                        {
-                                int response = SDLNet_TCP_Send(server,&player,sizeof(client));
-                                if ( response<sizeof(client) )
-                                {
-                                        printf("Auu: Failed to send position.\n");
-                                        printf("Disconnecting to save face.\n");
-                                        SDLNet_TCP_Close( server );
-                                        printf("Disconnected. Commiting senpuku.\n");
-
-                                        SDL_Quit();
-                                        SDLNet_Quit();
-                                        return 1;
-                                }
-                        }
-
-                }
-
+                        // Update server.
+                        if (server) update_server(server, me);
         }
         
         return 0;
+}
 }
