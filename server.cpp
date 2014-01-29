@@ -71,7 +71,7 @@ void get_data(player target, int *value)
 
 void handle_client(int element)
 {
-        player target = players[element];
+        player &target = players[element];
 
         // Only bother if the client had activity.
         if ( SDLNet_SocketReady(target.socket) )
