@@ -28,9 +28,13 @@ const int TIMEOUT       = 100;
 char server_ip[] = "124.82.1.157";
 const int port = 8000;
 
+const int SERVER_MESSAGE_JOIN = 1;
+const int SERVER_MESSAGE_QUIT = 2;
+const int SERVER_MESSAGE_MOVE = 3;
+
 // Hurr globals are bad hurr durr
-SDL_Window *window     = NULL;
-SDL_Renderer *renderer = NULL;
+SDL_Window   * window   = NULL;
+SDL_Renderer * renderer = NULL;
 
 // Struct declarations.
 struct colourstruct
@@ -44,9 +48,10 @@ struct player
 {
         int id;
         colourstruct colour;
-        static int x;
-        static int y;
+        int x;
+        int y;
 };
+vector<player> players;
 
 // Function declarations.
 void drawRedGrid()
@@ -134,25 +139,33 @@ void inititalize_game()
         renderer = SDL_CreateRenderer( window, -1, 0 );
 }
 
+void send_data(TCPsocket server, int data)
+{
+        int response = SDLNet_TCP_Send(server, &data, sizeof(int));
+        if ( response<sizeof(int) )
+        {
+                printf("Auu: Failed to send data!\n");
+                printf("Disconnecting to save face.\n");
+                SDLNet_TCP_Close( server );
+                printf("Disconnected. Commiting senpuku.\n");
+
+                SDL_Quit();
+                SDLNet_Quit();
+                exit(0);
+        }
+}
+
 void update_server(TCPsocket server, player me)
 {
-                int response = SDLNet_TCP_Send(server, &me, sizeof(player));
-                if ( response<sizeof(player) )
-                {
-                        printf("Auu: Failed to send position.\n");
-                        printf("Disconnecting to save face.\n");
-                        SDLNet_TCP_Close( server );
-                        printf("Disconnected. Commiting senpuku.\n");
-
-                        SDL_Quit();
-                        SDLNet_Quit();
-                        exit(0);
-                }
+        int x = me.x, y = me.y;
+        printf("X: %d, Y: %d\n", x, y);
+        send_data(server, x);
+        send_data(server, y);
 }
 
 void get_data(TCPsocket server, int *value)
 {
-        int response = SDLNet_TCP_Recv( server,&value,sizeof(int));
+        int response = SDLNet_TCP_Recv( server, value, sizeof(int));
         if ( response <= 0 )
         {
                 printf("Got an error while trying to get some data. Server must've crashed tragically.\n");
@@ -163,7 +176,7 @@ void get_data(TCPsocket server, int *value)
 
 void get_data(TCPsocket server, colourstruct *value)
 {
-        int response = SDLNet_TCP_Recv( server, &value, sizeof(colourstruct));
+        int response = SDLNet_TCP_Recv( server, value, sizeof(colourstruct));
         if ( response <= 0 )
         {
                 printf("Got an error while trying to get some data. Server must've crashed tragically.\n");
@@ -174,7 +187,7 @@ void get_data(TCPsocket server, colourstruct *value)
 
 void get_data(TCPsocket server, player *value)
 {
-        int response = SDLNet_TCP_Recv( server, &value, sizeof(player));
+        int response = SDLNet_TCP_Recv( server, value, sizeof(player));
         if ( response <= 0 )
         {
                 printf("Got an error while trying to get some data. Server must've crashed tragically.\n");
@@ -183,7 +196,7 @@ void get_data(TCPsocket server, player *value)
         }
 }
 
-int get_client_position(vector<player> players, int id)
+int get_client_position(int id)
 {
         for (int i = 0; i < players.size(); i++)
         {
@@ -194,26 +207,23 @@ int get_client_position(vector<player> players, int id)
         }
 }
 
-void update_positions(TCPsocket server, vector<player> players)
+void update_positions(TCPsocket server)
 {
-        // Get the number of updates.
-        int n;
-        get_data(server, &n);
+        // Get the client id to update.
+        int id;
+        get_data(server, &id);
+        // Then the coords.
+        int x; int y;
+        get_data(server, &x); get_data(server, &y);
 
-        for (int i = 0; i < n; i++)
-        {
-                // Get the client id to update.
-                int id;
-                get_data(server, &id);
-                // Then the coords.
-                int x; int y;
-                get_data(server, &x); get_data(server, &x);
-                players[get_client_position(players, id)].x = x;
-                players[get_client_position(players, id)].y = y;
-        }
+        // Find and update player.
+        printf("in update_pos; id: %d, x: %d, y: %d.\n",id, x, y);
+        int element = get_client_position(id);
+        players[element].x = x;
+        players[element].y = y;
 }
 
-void add_client(TCPsocket server, vector<player> players)
+void add_client(TCPsocket server)
 {
         player new_client;
 
@@ -231,50 +241,58 @@ void add_client(TCPsocket server, vector<player> players)
         new_client.y      = y;
         new_client.colour = colour;
 
+        players.push_back(new_client);
         printf("Someone new joined: ID: %d, at (%d, %d)\n", new_client.id, new_client.x, new_client.y);
+        printf("New number of players: %d\n", players.size());
 }
 
-void remove_client(TCPsocket server, vector<player> players)
+void remove_client(TCPsocket server)
 {
         // Get the ID of the person who left and remove him for the players array.
         int id;
         get_data(server, &id);
 
-        int pos = get_client_position(players, id);
+        int pos = get_client_position(id);
         players.erase(players.begin() + pos);
 
         printf("Client %d left.\n", id);
 }
 
-void handle_server(TCPsocket server, vector<player> players)
+void handle_server(TCPsocket server)
 {
         // 1. Determine what the server is trying to send us.
         // It can be
         //  a. Client join             ( message = 1 )
         //  b. Client leave            ( message = 2 )
-        //  c. Client position update. ( message = 1 )
+        //  c. Client position update. ( message = 3 )
         //
         // In each case, this client has to handle each situation gracefully.
         int message;
         get_data(server, &message);
 
         switch (message) {
-                case 1:
-                        add_client(server, players);
+                case SERVER_MESSAGE_JOIN:
+                        printf("Received message: SERVER_MESSAGE_JOIN\n");
+                        add_client(server);
+                        printf("alright, add_client ran...\n");
+                        printf("total: %d\n",players.size());
                         break;
-                case 2:
-                        remove_client(server, players);
+                case SERVER_MESSAGE_QUIT:
+                        printf("Received message:  SERVER_MESSAGE_QUIT\n");
+                        remove_client(server);
                         break;
-                case 3:
-                        update_positions(server, players);
+                case SERVER_MESSAGE_MOVE:
+                        printf("Received message:  SERVER_MESSAGE_MOVE\n");
+                        update_positions(server);
                         break;
                 default:
                         printf("Woah, I just got a pretty strange response.\n");
+                        printf("%d\n",message);
                         break;
         }
 }
 
-void draw_grid(player me, vector<player> players)
+void draw_grid(player me)
 {
         resetGrid();
 
@@ -305,7 +323,8 @@ int main(int argc, const char *argv[])
         if ( !server )
         {
                 printf("Could't connect to server\nWill carry on nonetheless. Don't worry.\n");
-        } else {
+        } else
+        {
                 printf("Connected to a remote server! Surprisingly.\n");
                 // Add it to the socket set so that it can be monitored for activity.
                 SDLNet_TCP_AddSocket( server_monitor, server );
@@ -321,7 +340,6 @@ int main(int argc, const char *argv[])
         player me;
         me.x = 0;
         me.y = 0;
-        vector <player> players;
 
         // //
         // Program loop starts here.
@@ -332,10 +350,10 @@ int main(int argc, const char *argv[])
                 if (server)
                 {
                         // Only bother trying if the server actually sent something.
-                        if (SDLNet_CheckSockets(server_monitor, 0)) handle_server(server, players);
+                        if (SDLNet_CheckSockets(server_monitor, 0)) handle_server(server);
                 }
 
-                draw_grid(me, players);
+                draw_grid(me);
 
                 // Render everything that's been drawn.
                 SDL_RenderPresent( renderer );
@@ -370,8 +388,8 @@ int main(int argc, const char *argv[])
 
                         // Update server.
                         if (server) update_server(server, me);
+                }
+
         }
-        
         return 0;
-}
 }
