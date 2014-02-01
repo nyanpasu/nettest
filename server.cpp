@@ -12,7 +12,7 @@
 #include <SDL2/SDL_net.h>
 using namespace std;
 
-const int PORT = 8000;
+// Constant and global declarations.
 
 const int SERVER_MESSAGE_JOIN = 1;
 const int SERVER_MESSAGE_QUIT = 2;
@@ -27,139 +27,79 @@ struct colourstruct
         int blue;
 };
 
-struct player
+// Class declarations.
+class Player
 {
+public:
         int id;
         colourstruct colour;
         int x;
         int y;
-        TCPsocket socket;
 };
-vector <player> players;
 
-void update_set(SDLNet_SocketSet set)
+class Client
 {
-        SDLNet_FreeSocketSet (set);
+        public:
+        TCPsocket socket;
+        Player entity;
+};
 
-        set = SDLNet_AllocSocketSet(players.size());
-        for ( int i = 0; i < players.size(); i++ )
+class Clients {
+public:
+        Clients ();
+
+        void add(Player);
+        void kill(int);
+        void move(int, int, int);
+        Client at(int);
+        size_t total();
+        TCPsocket socket(int);
+
+private:
+        vector<Client> connected_clients;
+};
+
+Client Clients::at(int element)
+{
+        return connected_clients[element];
+}
+
+size_t Clients::total()
+{
+        return connected_clients.size();
+}
+
+TCPsocket Clients::socket(int id)
+{
+        for (int i = 0; i < total(); i++)
         {
-                SDLNet_TCP_AddSocket(set, players[i].socket);
-        }
-
-}
-
-void send_data(TCPsocket target, int data)
-{
-        SDLNet_TCP_Send( target, &data, sizeof(int));
-}
-
-void send_data(TCPsocket target, colourstruct data)
-{
-        SDLNet_TCP_Send( target, &data, sizeof(colourstruct));
-}
-
-void get_data(player target, int *value)
-{
-        int response = SDLNet_TCP_Recv(target.socket, value, sizeof(int));
-        if ( response <= 0 )
-        {
-                        printf("Received error for client #%d. Disconnecting.\n", target.id);
-                        exit(1);
-        }
-}
-
-void handle_client(int element)
-{
-        player &target = players[element];
-
-        // Only bother if the client had activity.
-        if ( SDLNet_SocketReady(target.socket) )
-        {
-                int new_x, new_y;
-                get_data(target, &new_x);
-                get_data(target, &new_y);
-
-                target.x = new_x;
-                target.y = new_y;
-        }
-
-        printf("handle_client: %d, %d\n", target.x, target.y);
-}
-
-// Informs every player about the sudden addition of the new_player
-void handle_join(player new_player)
-{
-        // For every client connected
-        for (int i = 0; i < players.size(); i++)
-        {
-                player target = players[i];
-                // Ignore if same client. Client doesn't need to know about himself.
-                if (target.id != new_player.id)
+                if (connected_clients[i].id == id)
                 {
-                        printf("Sending: SERVER_MESSAGE_JOIN: %d, id: %d, x: %d, y: %d\n",SERVER_MESSAGE_JOIN, new_player.id, new_player.x, new_player.y);
-                        send_data(target.socket, SERVER_MESSAGE_JOIN);
-                        send_data(target.socket, new_player.id);
-                        send_data(target.socket, new_player.colour);
-                        send_data(target.socket, new_player.x); send_data(target.socket, new_player.y);
+                        return connected_clients[i].socket;
                 }
         }
 }
 
-void handle_new_client(player new_player)
-{
-        // For every client connected
-        for (int i = 0; i < players.size(); i++)
-        {
-                player target = players[i];
-                // Ignore if same client. Client doesn't need to know about himself.
-                if (target.id != new_player.id)
-                {
-                        printf("Sending: SERVER_MESSAGE_JOIN: %d, id: %d, x: %d, y: %d\n",SERVER_MESSAGE_JOIN, new_player.id, new_player.x, new_player.y);
-                        send_data(new_player.socket, SERVER_MESSAGE_JOIN);
-                        send_data(new_player.socket, target.id);
-                        send_data(new_player.socket, target.colour);
-                        send_data(new_player.socket, target.x); send_data(new_player.socket, target.y);
-                }
-        }
-}
+class Server {
+        public:
+        Server();
+        void start(int);
+        void accept_new_connections(Clients);
+        void update_set(Clients);
+        void send_data(TCPsocket, int);
+        void send_data(TCPsocket, colourstruct);
+        void get_data(Client, int *);
+        void handle_client(Client);
+        void handle_new_client(Clients, Client);
+        void handle_leave(Clients, Client);
+        void handle_move(Clients, Client);
 
-// Informs every player about the disconnection of a player.
-void handle_leave(player old_player)
-{
-        // For every client connected
-        for (int i = 0; i < players.size(); i++)
-        {
-                player target = players[i];
-                // Ignore if same client. Client doesn't need to know about himself.
-                if (target.id != old_player.id)
-                {
-                        send_data(target.socket, SERVER_MESSAGE_JOIN);
-                        send_data(target.socket, old_player.id);
-                        send_data(target.socket, old_player.colour);
-                        send_data(target.socket, old_player.x); send_data(target.socket, old_player.y);
-                }
-        }
-}
+private:
+        TCPsocket server;
+        SDLNet_SocketSet set;
+};
 
-// Sends positional update to every player.
-void handle_move(player current_player)
-{
-        for (int i = 0; i < players.size(); i++)
-        {
-                player target = players[i];
-
-                // Ignore if same player.
-                if (target.id == current_player.id) continue;
-
-                send_data(target.socket, SERVER_MESSAGE_MOVE);
-                send_data(target.socket, current_player.id);
-                send_data(target.socket, current_player.x);
-                send_data(target.socket, current_player.y);
-        }
-}
-
-int main(int argc, const char *argv[])
+void Server::start(int port)
 {
         // All pre program routines... inits and so.
         SDLNet_Init();
@@ -167,45 +107,37 @@ int main(int argc, const char *argv[])
         // Init variables...
         IPaddress ip, *remote_ip;
         TCPsocket server;
-        SDLNet_SocketSet clients_set = SDLNet_AllocSocketSet(1);
-
-        // Init the vector of clients set up and so.
-        vector <TCPsocket> clients;
-        int last_id = 0;
-        
-        // For random numbers
-        srand(time(NULL));
+        set = SDLNet_AllocSocketSet(1);
 
         // Open the server's gates to the unknown!
-        SDLNet_ResolveHost( &ip, NULL, PORT );
+        SDLNet_ResolveHost( &ip, NULL, port );
 
         server = SDLNet_TCP_Open(&ip);
+
         if(!server)
         {
                 printf("Couldn't start server: %s\n",SDLNet_GetError());
                 printf("Gee, that was anti climatic.\n");
-                exit(4);
+                exit(-1);
         } else {
                 printf("Server started! o/\n");
         }
+}
 
-        // Main program loop
-        bool loop = true;
-        while ( loop ) 
-        {
-                // Handle new client connections.
+void Server::accept_new_connections(Clients everyone)
+{
                 TCPsocket client;
                 client = SDLNet_TCP_Accept(server);
 
                 if (client)
                 {
-                        printf("A new client connected. %d currently connected.\n", clients.size() + 1 );
+                        printf("A new client connected. %d currently connected.\n", everyone.total() + 1 );
 
-                        remote_ip = SDLNet_TCP_GetPeerAddress( client );
+                        IPaddress remote_ip = SDLNet_TCP_GetPeerAddress( client );
                         if ( !remote_ip )
                         {
                                 printf( "For some arcane reason, someone connected... and then.. ;_;: %s\n", SDLNet_GetError() );
-                                exit(1);
+                                exit(-1);
                         }
 
                         Uint32 ipaddr = SDL_SwapBE32( remote_ip->host ); // Get the actual value of the address
@@ -218,16 +150,16 @@ int main(int argc, const char *argv[])
                                                                                        remote_ip->port);
 
                         // Update the arrays.
-                        player new_player;
-                        new_player.socket = client;
-                        new_player.id = last_id++;
-                        new_player.colour.red   = rand() % 255;
-                        new_player.colour.green = rand() % 255;
-                        new_player.colour.blue  = rand() % 255;
+                        Client new_player;
+                        new_player.socket              = client;
+                        new_player.entity.id           = last_id++;
+                        new_player.entity.colour.red   = rand() % 255;
+                        new_player.entity.colour.green = rand() % 255;
+                        new_player.entity.colour.blue  = rand() % 255;
                         // TODO proper x y
                         // new_player.x = 5;
                         // new_player.y = 4;
-                        players.push_back(new_player);
+                        everyone.add(new_player);
 
                         // Update clients about the new client.
                         handle_join(new_player);
@@ -237,6 +169,139 @@ int main(int argc, const char *argv[])
                         update_set(clients_set);
                 }
 
+}
+void Server::update_set(Clients clients)
+{
+        SDLNet_FreeSocketSet (set);
+
+        set = SDLNet_AllocSocketSet(clients.total());
+        for ( int i = 0; i < clients.total(); i++ )
+        {
+                SDLNet_TCP_AddSocket(set, clients.at(i).socket);
+        }
+
+}
+
+void Server::send_data(TCPsocket target, int data)
+{
+        SDLNet_TCP_Send( target, &data, sizeof(int));
+}
+
+void Server::send_data(TCPsocket target, colourstruct data)
+{
+        SDLNet_TCP_Send( target, &data, sizeof(colourstruct));
+}
+
+void Server::get_data(Client target, int *value)
+{
+        int response = SDLNet_TCP_Recv(target.socket, value, sizeof(int));
+        if ( response <= 0 )
+        {
+                printf("Received error for client #%d. Disconnecting.\n", target.entity.id);
+        }
+}
+
+void handle_client(Client target)
+{
+        // Only bother if the client had activity.
+        if ( SDLNet_SocketReady(target.socket) )
+        {
+                int received_x, received_y;
+                get_data(target, &received_x);
+                get_data(target, &received_y);
+
+                target.x = received_x;
+                target.y = received_y;
+        }
+
+}
+
+// Informs every player about the sudden addition of the new_player
+void Server::handle_join(Clients everyone, Client new_target)
+{
+        // For every client connected
+        for (int i = 0; i < everyone.total(); i++)
+        {
+                Client target = everyone.at(i);
+                // Ignore if same client. Client doesn't need to know about himself.
+                if (target.id != new_player.id)
+                {
+                        printf("Sending: SERVER_MESSAGE_JOIN: %d, id: %d, x: %d, y: %d\n",SERVER_MESSAGE_JOIN, new_player.id, new_player.x, new_player.y);
+                        send_data(target.socket, SERVER_MESSAGE_JOIN);
+                        send_data(target.socket, new_player.id);
+                        send_data(target.socket, new_player.colour);
+                        send_data(target.socket, new_player.x); send_data(target.socket, new_player.y);
+                }
+        }
+}
+
+// Update a newcomer about the existing clients.
+void Server::handle_new_client(Clients everyone, Client new_player)
+{
+        // For every client connected
+        for (int i = 0; i < everyone.total(); i++)
+        {
+                Client target = everyone.at(i);
+                // Ignore if same client. Client doesn't need to know about himself.
+                if (target.entity.id != new_player.entity.id)
+                {
+                        printf("Sending: SERVER_MESSAGE_JOIN: %d, id: %d, x: %d, y: %d\n",SERVER_MESSAGE_JOIN, new_player.entity.id, new_player.entity.x, new_player.entity.y);
+                        send_data(new_player.socket, SERVER_MESSAGE_JOIN);
+                        send_data(new_player.socket, target.entity.id);
+                        send_data(new_player.socket, target.entity.colour);
+                        send_data(new_player.socket, target.entity.x); send_data(new_player.socket, target.entity.y);
+                }
+        }
+}
+
+// Informs every player about the disconnection of a player.
+void Server::handle_leave(Clients everyone, Client old_player)
+{
+        // For every client connected
+        for (int i = 0; i < everyone.total(); i++)
+        {
+                Client target = everyone.at(i);
+                // Ignore if same client. Client doesn't need to know about himself.
+                if (target.entity.id != old_player.entity.id)
+                {
+                        send_data(target.socket, SERVER_MESSAGE_QUIT);
+                        send_data(target.socket, old_player.entity.id);
+                }
+        }
+}
+
+// Sends positional update to every player.
+void Server::handle_move(Clients everyone, Client current_player)
+{
+        for (int i = 0; i < everyone.total(); i++)
+        {
+                Client target = everyone.at(i);
+
+                // Ignore if same player.
+                if (target.entity.id == current_player.entity.id) continue;
+
+                send_data(target.socket, SERVER_MESSAGE_MOVE);
+                send_data(target.socket, current_player.entity.id);
+                send_data(target.socket, current_player.entity.x);
+                send_data(target.socket, current_player.entity.y);
+        }
+}
+
+
+int main(int argc, const char *argv[])
+{
+        // For random numbers
+        srand(time(NULL));
+
+        Server serber;
+        serber.start(8000);
+
+        // Main program loop
+        bool loop = true;
+        while ( loop ) 
+        {
+                // Handle new client connections.
+                serber.accept_new_connections();
                 // Handle existing clients.
                 // Check all sockets for apparent activity.
                 int result = SDLNet_CheckSockets(clients_set, 100);
@@ -245,13 +310,11 @@ int main(int argc, const char *argv[])
                 for ( int i = 0; i < players.size() && result; i++ )
                 {
                         handle_client(i);
-                        printf("main: %d, %d\n", players[i].x, players[i].y);
                 }
 
                 // Send position changes for every player.
                 for ( int i = 0; i < players.size(); i++ )
                 {
-                        printf("x: %d, y: %d\n", players[i].x, players[i].y);
                         handle_move(players[i]);
                 }
         }
