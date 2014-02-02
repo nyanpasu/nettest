@@ -7,7 +7,7 @@ client:
 	$(CXX) -o bin/client Client/main.cpp $(FLAGS)
 
 server:
-	$(CXX) -o bin/server Server/server.cpp $(FLAGS)
+	$(CXX) -o bin/server Server/main.cpp $(FLAGS)
 
 clean:
 	rm bin/client bin/server

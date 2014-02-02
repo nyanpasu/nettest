@@ -4,15 +4,11 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_net.h>
 
-#include "player.hpp"
-#include "client.hpp"
-#include "game.hpp"
-
-// Constant and global declaration.
+#include "util.hpp"
+#include "server.hpp"
 
 int main(int argc, const char *argv[]){
-    srand(time(NULL));
-    Game game;
-    game.game_loop();
+    Server server;
+    server.server_loop();
     return 0;
 }
