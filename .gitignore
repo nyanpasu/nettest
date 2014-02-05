@@ -1,3 +1,11 @@
+<<<<<<< HEAD
 client
 server
 *.swp
+=======
+SDL2/bin
+SDL2/*.swp
+SFML/bin
+SFML/*.swp
+./.gitignore
+>>>>>>> 694ca6d81bf778e2ceb3ed52c88ec3c2f89e64f5
